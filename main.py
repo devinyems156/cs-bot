@@ -119,14 +119,14 @@ async def list_roles(ctx: discord.ApplicationContext):
 
 
 @debug.command()
-async def set_steam(ctx: discord.ApplicationContext, steam_id):
+async def set_steam(ctx: discord.ApplicationContext, steam_id, user: discord.User):
     steam_id = int(steam_id)
-    user_id = ctx.user.id
+    user_id = user.id
     success = await bot.database.update_user(user_id=user_id, steam_id=steam_id, verified=True,
                                              last_check=0, total=0, items=0, verify_attempts=0)
     if not success:
         await bot.database.create_user(user_id=user_id, steam_id=steam_id, verified=True, last_check=0)
-    await ctx.respond(f"Steam `{steam_id}` linked successfully")
+    await ctx.respond(f"Steam `{steam_id}` linked successfully with {user.mention}", allowed_mentions=no_mentions)
 
 
 @bot.command(name='force-check', description='Force checking your steam account total cost')
