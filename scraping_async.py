@@ -15,7 +15,8 @@ async def get_steam_user_info(steam_id):
 
             nickname_element = soup.select_one('.actual_persona_name')
             description_element = soup.select_one('.profile_summary')
-            avatar_element = soup.select_one('.playerAvatarAutoSizeInner img')
+            avatar_elements = soup.select('.playerAvatarAutoSizeInner img')
+            avatar_element = avatar_elements[-1]
 
             nickname = nickname_element.text.strip() if nickname_element else "Nickname not found"
             description = description_element.text.strip() if description_element else "Description not found"

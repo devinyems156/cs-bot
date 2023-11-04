@@ -30,14 +30,16 @@ class Database:
                     'verified': verified,
                     'total': total,
                     'code': code,
-                    'last_check': last_check
+                    'last_check': last_check,
+                    'items': 0,
+                    'verify_attempts': 0,
                     }
             await self.users_collection.insert_one(user)
             return True
         return False
 
     async def update_user(self, user_id: int, steam_id: int = None, verified: bool = None, total: int = None,
-                          code: str = None, last_check: int = None):
+                          code: str = None, last_check: int = None, items: int = None, verify_attempts: int = None):
         user = await self.users_collection.find_one({'_id': user_id})
         if not user:
             return False
@@ -51,6 +53,10 @@ class Database:
             user['code'] = code
         if last_check is not None:
             user['last_check'] = last_check
+        if items is not None:
+            user['items'] = items
+        if verify_attempts is not None:
+            user['verify_attempts'] = verify_attempts
         await self.users_collection.replace_one({'_id': user_id}, user)
 
     async def get_next_user(self):

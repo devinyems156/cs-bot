@@ -1,6 +1,7 @@
 # import json
+import asyncio
+
 import aiohttp
-# import asyncio
 
 
 async def get_prices():
@@ -39,12 +40,14 @@ async def get_inventory(steam_id: int):
         response.raise_for_status()
         # print(f"Failed to retrieve inventory. Status Code: {response.status_code}")
         data = await response.json()
+        # print(data)
     if 'assets' not in data:
         print(f"[INFO ] No CS:GO inventory items found for user with steam_id {steam_id}")
         return {}
 
     assets = data['assets']
     descriptions = data['descriptions']
+    items_num = data['total_inventory_count']
     inventory = {}
     for asset in assets:
         # asset_id = asset['assetid']
@@ -67,7 +70,7 @@ async def get_inventory(steam_id: int):
     # for i in inventory.values():
     #     print(f"Class ID: {i['classid']}, Name: {i['name']}, Amount: {i['amount']}")
     #     print("---")
-    return inventory
+    return inventory, items_num
 
 
 # async def get_total_price(steam_id):
@@ -89,10 +92,10 @@ async def get_inventory(steam_id: int):
 
 
 async def get_total_price_by_price_list(steam_id: int, item_prices: dict):
-    inventory = await get_inventory(steam_id)
+    inventory, items_num = await get_inventory(steam_id)
     total = 0
     for item_name, amount in inventory.items():
-        price = item_prices.get(item_name)
+        price = item_prices.get(item_name, 0)
         cost = amount * price
         total += cost
 
@@ -102,7 +105,7 @@ async def get_total_price_by_price_list(steam_id: int, item_prices: dict):
     # print(total)
     total = round(total, 2)
     # print(total)
-    return total
+    return total, items_num
 
 
 
@@ -115,3 +118,9 @@ async def get_total_price_by_price_list(steam_id: int, item_prices: dict):
 #     loop.run_forever()
 #     # get_inventory(steam64_id)
 #     # get_prices()
+
+# async def test():
+#     print(await get_inventory(76561198073924626))
+#
+# if __name__ == '__main__':
+#     asyncio.run(test())

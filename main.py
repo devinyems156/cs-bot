@@ -24,7 +24,6 @@ PRICES_INTERVAL = int(os.getenv('PRICES_INTERVAL'))
 embed_color = int(os.getenv('EMBED_COLOR'), base=16)  # 0x00FF00
 
 no_mentions = discord.AllowedMentions.none()
-administrator_permissions = discord.Permissions.none() + discord.Permissions.administrator
 
 bot.database: Database = None
 bot.prices_task = None
@@ -32,8 +31,10 @@ bot.prices = None
 bot.check_task = None
 bot.queue = []
 
-roles = discord.SlashCommandGroup('roles', 'Configuration of roles')
-debug = discord.SlashCommandGroup('debug', 'Test commands')
+admin_permissions = discord.Permissions.none() + discord.Permissions.administrator
+
+roles = discord.SlashCommandGroup('roles', 'Configuration of roles', default_member_permissions=admin_permissions)
+debug = discord.SlashCommandGroup('debug', 'Test commands', default_member_permissions=admin_permissions)
 
 
 @bot.event
@@ -54,8 +55,7 @@ async def ping(ctx):  # a slash command will be created with the name "ping"
     await ctx.respond(f"Pong! Latency is {bot.latency}")
 
 
-@roles.command(default_member_permissions=administrator_permissions,
-               description='Add role to the database to be given to users')
+@roles.command(description='Add role to the database to be given to users')
 @discord.option(name='role', input_type=discord.Role,
                 description='The role to remove from the list to no longer be added')
 @discord.option(name='cost', input_type=float,
@@ -73,8 +73,7 @@ async def add(ctx: discord.ApplicationContext, role: discord.Role, cost: float):
                           f'check it. If so, use `/roles change` instead', allowed_mentions=no_mentions)
 
 
-@roles.command(default_member_permissions=administrator_permissions,
-               description='Change role\'s minimal inventory cost')
+@roles.command(description='Change role\'s minimal inventory cost')
 @discord.option(name='role', input_type=discord.Role,
                 description='The role to change it\'s minimal inventory cost')
 @discord.option(name='cost', input_type=float,
@@ -91,8 +90,7 @@ async def change(ctx: discord.ApplicationContext, role: discord.Role, cost: floa
         await ctx.respond(f'There were no {role.mention} yet, so it was added', allowed_mentions=no_mentions)
 
 
-@roles.command(default_member_permissions=administrator_permissions,
-               description='Remove a role from the list')
+@roles.command(description='Remove a role from the list')
 @discord.option(name='role', input_type=discord.Role,
                 description='The role to remove from the list to no longer be added')
 async def remove(ctx: discord.ApplicationContext,
@@ -108,8 +106,7 @@ async def remove(ctx: discord.ApplicationContext,
                           allowed_mentions=no_mentions)
 
 
-@roles.command(default_member_permissions=administrator_permissions,
-               description='List all the roles', name='list')
+@roles.command(description='List all the roles', name='list')
 async def list_roles(ctx: discord.ApplicationContext):
     roles_dict: dict = await bot.database.get_all_roles()
     roles = list(roles_dict.values())
@@ -121,17 +118,18 @@ async def list_roles(ctx: discord.ApplicationContext):
     await ctx.respond(text, allowed_mentions=no_mentions)
 
 
-@debug.command(default_member_permissions=administrator_permissions)
+@debug.command()
 async def set_steam(ctx: discord.ApplicationContext, steam_id):
     steam_id = int(steam_id)
     user_id = ctx.user.id
-    success = await bot.database.update_user(user_id=user_id, steam_id=steam_id, verified=True, last_check=0)
+    success = await bot.database.update_user(user_id=user_id, steam_id=steam_id, verified=True,
+                                             last_check=0, total=0, items=0, verify_attempts=0)
     if not success:
         await bot.database.create_user(user_id=user_id, steam_id=steam_id, verified=True, last_check=0)
     await ctx.respond(f"Steam `{steam_id}` linked successfully")
 
 
-@bot.command(default_member_permissions=administrator_permissions, name='force-check')
+@bot.command(name='force-check', description='Force checking your steam account total cost')
 async def force_check(ctx: discord.ApplicationContext):
     user_id = ctx.user.id
     user_info = await bot.database.get_user(user_id)
@@ -148,9 +146,37 @@ async def force_check(ctx: discord.ApplicationContext):
     if left > 0:
         await ctx.respond('Your inventory was checked recently')
         return
+    if user_id in bot.queue:
+        await ctx.respond('Checking your inventory is already scheduled, please wait')
+        return
     bot.queue.append(user_id)
     await ctx.respond('Checking your inventory was scheduled, please wait')
     await check_user(user_id)
+
+
+@bot.slash_command(description='Show your stats')
+async def inventory(ctx: discord.ApplicationContext):
+    user_id = ctx.user.id
+    user_info = await bot.database.get_user(user_id)
+    if not user_info:
+        await ctx.respond("You need to connect your steam account first")
+        return
+    steam_id = user_info['steam_id']
+    items = user_info['items']
+    price = user_info['total']
+    steam_user_info = await get_steam_user_info(steam_id)
+    nickname = steam_user_info['nickname']
+    description = steam_user_info['description']
+    avatar_url = steam_user_info['avatar']
+    embed = discord.Embed(title=nickname, description=description,
+                          color=embed_color)
+    embed.add_field(name="Steam ID", value=str(steam_id))
+    embed.add_field(name="Total items", value=str(items))
+    embed.add_field(name="Total value", value='$' + str(price))
+    link = f'https://steamcommunity.com/profiles/{user_id}/inventory/#730'
+    # embed.add_field(name="Link", value=link)
+    embed.set_thumbnail(url=avatar_url)
+    await ctx.respond(f'{ctx.user.mention}\'s Steam:', embed=embed, allowed_mentions=no_mentions, view=MyView4(link))
 
 
 async def prices_task():
@@ -179,12 +205,17 @@ async def background_check_task():
             left = USER_INTERVAL - time
             # print(time, left)
             if left > 0:
-                print(f'[INFO ] Next user steam inventory total cost check will be in {left} seconds')
-                await asyncio.sleep(left)
+                # print(f'[INFO ] Next user steam inventory total cost check will be in {left} seconds')
+                if left > CHECK_INTERVAL:
+                    await asyncio.sleep(CHECK_INTERVAL)
+                    continue
+                else:
+                    await asyncio.sleep(left)
             await check_user(user_id)
-            await bot.database.update_user(user_id=user_id, last_check=int(datetime.datetime.now().timestamp()))
+            # await bot.database.update_user(user_id=user_id, last_check=int(datetime.datetime.now().timestamp()))
         except Exception as e:
-            print(f"[ERROR] something went wrong: {e}")
+            print(f"[ERROR] Something went wrong: {e}")
+            await asyncio.sleep(5*CHECK_INTERVAL)
         await asyncio.sleep(CHECK_INTERVAL)
 
 
@@ -197,7 +228,7 @@ async def check_user(user_id):
     if bot.prices is None:
         while bot.prices is None:
             await asyncio.sleep(60)
-    total = await get_total_price_by_price_list(steam_id, bot.prices)
+    total, items = await get_total_price_by_price_list(steam_id, bot.prices)
     # total = 1729.52
     roles_dict: dict = await bot.database.get_all_roles()
     roles = list(roles_dict.values())
@@ -213,8 +244,6 @@ async def check_user(user_id):
     guild = bot.get_guild(GUILD_ID)
     # print(guild)
     # print(user_id)
-    member = guild.get_member(user_id)
-    # print(member)
     member = await guild.fetch_member(user_id)
     # print(member)
     if chosen_role_id != 0:
@@ -226,7 +255,7 @@ async def check_user(user_id):
         if role in member.roles and role.id != chosen_role_id:
             await member.remove_roles(role)
     ts = int(datetime.datetime.now().timestamp())
-    await bot.database.update_user(user_id=user_id, last_check=ts)
+    await bot.database.update_user(user_id=user_id, last_check=ts, items=items, total=total)
 
 
 bot.add_application_command(roles)
@@ -242,12 +271,18 @@ def generate_code():
     return code
 
 
-@bot.slash_command(name='connect-steam')
+@bot.slash_command(name='connect-steam', description='Link your steam account')
+@discord.option(name='role', input_type=discord.Role,
+                description='Your steam id')
 async def connect_steam(ctx: discord.ApplicationContext,
                         steam_id: discord.Option(input_type=int)):
     steam_id = int(steam_id)
     user_id = ctx.user.id
-    user_info = await get_steam_user_info(steam_id)
+    try:
+        user_info = await get_steam_user_info(steam_id)
+    except Exception as e:
+        print(f'[ERROR] something went wrong: {e}')
+        await ctx.respond('It seems this steam id is incorrect. Please, try again')
     # print(user_info)
     nickname = user_info['nickname']
     description = user_info['description']
@@ -315,8 +350,12 @@ class MyView2(discord.ui.View):
 
 
 class MyView3(discord.ui.View):
-    def __init__(self):
+    def __init__(self, link: bool = False):
         super().__init__(timeout=None)
+        if link:
+            button = discord.ui.Button(label="Guide", style=discord.ButtonStyle.link,
+                                       url='https://help.steampowered.com/en/faqs/view/2816-BE67-5B69-0FEC')
+            self.add_item(button)
 
     @discord.ui.button(label='Verify', custom_id='button', style=discord.ButtonStyle.primary)
     async def button(self, button, interaction):
@@ -333,19 +372,39 @@ class MyView3(discord.ui.View):
         steam_user_info = await get_steam_user_info(steam_id)
         nickname: str = steam_user_info['nickname']
         code: str = database_user_info['code']
+        num = database_user_info['verify_attempts']
+
         # print(nickname)
         # print(code)
         index = nickname.find(code)
         # print(index)
         response: discord.InteractionResponse = interaction.response
         if index == -1:
+            num += 1
+            await bot.database.update_user(user.id, verify_attempts=num)
+            if num > 3:
+                await response.edit_message(
+                    content='Oh no! Look\'s like you\'re having some trouble! Try again or use one of the buttons below'
+                            ' for guidance. You need to paste the `' +
+                            code + '` to your steam profile name (Go to View my profile -> Edit Profile -> General -> '
+                                   'Profile Name)', view=MyView3(True), embeds=[])
+                return
             await response.edit_message(content='Oops.. It seems there are no code `' + code +
                                                 '` in your steam name. If you didn\'t pasted it yet, '
                                                 'you should do it to verify your account', view=MyView3(), embeds=[])
+
+
         else:
             await bot.database.update_user(user.id, verified=True)
             await response.edit_message(content='Congratulations, you\'ve successfully verified your account. '
                                                 'Now you can return your real nickname', view=None)
+
+
+class MyView4(discord.ui.View):
+    def __init__(self, url: str):
+        super().__init__(timeout=None)
+        button = discord.ui.Button(label="Inventory", style=discord.ButtonStyle.link, url=url)
+        self.add_item(button)
 
 
 if __name__ == '__main__':
