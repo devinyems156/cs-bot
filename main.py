@@ -173,7 +173,7 @@ async def inventory(ctx: discord.ApplicationContext):
     embed.add_field(name="Steam ID", value=str(steam_id))
     embed.add_field(name="Total items", value=str(items))
     embed.add_field(name="Total value", value='$' + str(price))
-    link = f'https://steamcommunity.com/profiles/{user_id}/inventory/#730'
+    link = f'https://steamcommunity.com/profiles/{steam_id}/inventory/#730'
     # embed.add_field(name="Link", value=link)
     embed.set_thumbnail(url=avatar_url)
     await ctx.respond(f'{ctx.user.mention}\'s Steam:', embed=embed, allowed_mentions=no_mentions, view=MyView4(link))
