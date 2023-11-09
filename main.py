@@ -30,6 +30,7 @@ bot.prices_task = None
 bot.prices = None
 bot.check_task = None
 bot.queue = []
+bot.queue_messages = {}
 
 admin_permissions = discord.Permissions.none() + discord.Permissions.administrator
 
@@ -129,29 +130,29 @@ async def set_steam(ctx: discord.ApplicationContext, steam_id, user: discord.Use
     await ctx.respond(f"Steam `{steam_id}` linked successfully with {user.mention}", allowed_mentions=no_mentions)
 
 
-@bot.command(name='force-check', description='Force checking your steam account total cost')
-async def force_check(ctx: discord.ApplicationContext):
-    user_id = ctx.user.id
-    user_info = await bot.database.get_user(user_id)
-    if not user_info:
-        await ctx.respond('You need to add your account first')
-        return
-    if not user_info['verified']:
-        await ctx.respond('You need to verify your account first')
-        return
-    ts = user_info['last_check']
-    now = int(datetime.datetime.now().timestamp())
-    diff = now - ts
-    left = USER_INTERVAL - diff
-    if left > 0:
-        await ctx.respond('Your inventory was checked recently')
-        return
-    if user_id in bot.queue:
-        await ctx.respond('Checking your inventory is already scheduled, please wait')
-        return
-    bot.queue.append(user_id)
-    await ctx.respond('Checking your inventory was scheduled, please wait')
-    await check_user(user_id)
+# @bot.command(name='force-check', description='Force checking your steam account total cost')
+# async def force_check(ctx: discord.ApplicationContext):
+#     user_id = ctx.user.id
+#     user_info = await bot.database.get_user(user_id)
+#     if not user_info:
+#         await ctx.respond('You need to add your account first')
+#         return
+#     if not user_info['verified']:
+#         await ctx.respond('You need to verify your account first')
+#         return
+#     ts = user_info['last_check']
+#     now = int(datetime.datetime.now().timestamp())
+#     diff = now - ts
+#     left = USER_INTERVAL - diff
+#     if left > 0:
+#         await ctx.respond('Your inventory was checked recently')
+#         return
+#     if user_id in bot.queue:
+#         await ctx.respond('Checking your inventory is already scheduled, please wait')
+#         return
+#     bot.queue.append(user_id)
+#     await ctx.respond('Checking your inventory was scheduled, please wait')
+#     await check_user(user_id)
 
 
 @bot.slash_command(description='Show your stats')
@@ -161,6 +162,32 @@ async def inventory(ctx: discord.ApplicationContext):
     if not user_info:
         await ctx.respond("You need to connect your steam account first")
         return
+    if not user_info['verified']:
+        await ctx.respond('You need to verify your account first')
+        return
+    ts = user_info['last_check']
+    now = int(datetime.datetime.now().timestamp())
+    diff = now - ts
+    left = USER_INTERVAL - diff
+    if left > 0:
+        interaction: discord.Interaction = await ctx.respond('Your inventory was checked recently')
+        message: discord.InteractionMessage = await interaction.original_response()
+        await send_inventory_info(user_id, message, "Checked recently")
+        return
+    if len(bot.queue) > 0:
+        interaction: discord.Interaction = await ctx.respond("Checking your inventory was scheduled, please wait")
+        message: discord.InteractionMessage = await interaction.original_response()
+        await send_inventory_info(user_id, message, "Previous check")
+    else:
+        interaction: discord.Interaction = await ctx.respond("Checking your steam inventory...")
+    if user_id not in bot.queue:
+        bot.queue.append(user_id)
+    message: discord.InteractionMessage = await interaction.original_response()
+    bot.queue_messages[user_id] = message
+
+
+async def send_inventory_info(user_id, message: discord.Message, footer_text: str):
+    user_info = await bot.database.get_user(user_id)
     steam_id = user_info['steam_id']
     items = user_info['items']
     price = user_info['total']
@@ -176,7 +203,9 @@ async def inventory(ctx: discord.ApplicationContext):
     link = f'https://steamcommunity.com/profiles/{steam_id}/inventory/#730'
     # embed.add_field(name="Link", value=link)
     embed.set_thumbnail(url=avatar_url)
-    await ctx.respond(f'{ctx.user.mention}\'s Steam:', embed=embed, allowed_mentions=no_mentions, view=MyView4(link))
+    embed.set_footer(text=footer_text)
+    user = await bot.fetch_user(user_id)
+    await message.reply(f'{user.mention}\'s Steam:', embed=embed, allowed_mentions=no_mentions, view=MyView4(link))
 
 
 async def prices_task():
@@ -199,8 +228,10 @@ async def background_check_task():
                 user_id = bot.queue.pop(0)
                 user_data = await bot.database.get_user(user_id)
             else:
-                user_data = await bot.database.get_next_user()
-                user_id = user_data['_id']
+                await asyncio.sleep(5)
+                continue
+                #user_data = await bot.database.get_next_user()
+                # user_id = user_data['_id']
             time = int(datetime.datetime.now().timestamp()) - user_data['last_check']
             left = USER_INTERVAL - time
             # print(time, left)
@@ -213,6 +244,9 @@ async def background_check_task():
                     await asyncio.sleep(left)
             await check_user(user_id)
             # await bot.database.update_user(user_id=user_id, last_check=int(datetime.datetime.now().timestamp()))
+            if user_id in bot.queue_messages.keys():
+                message = bot.queue_messages.pop(user_id)
+                await send_inventory_info(user_id, message, "Just updated")
         except Exception as e:
             print(f"[ERROR] Something went wrong: {e}")
             await asyncio.sleep(5*CHECK_INTERVAL)
